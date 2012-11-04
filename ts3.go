@@ -6,8 +6,9 @@ package ts3
 import (
 	"bufio"
 	"fmt"
-	"log"
+	stdlog "log"
 	"net"
+	"os"
 	"strings"
 	"time"
 )
@@ -17,13 +18,15 @@ const (
 	VerificationID = "TS3"
 )
 
+// Custom logger
+var log = stdlog.New(os.Stdout, "ts3> ", stdlog.LstdFlags)
+
 var (
 	WriteRetries = 3
-	//
 	ReadAfter    = 100 * time.Millisecond
-	DialTimeout  = time.Second
-	ReadTimeout  = 250 * time.Millisecond
-	WriteTimeout = 500 * time.Millisecond
+	DialTimeout  = 1 * time.Second
+	ReadTimeout  = 2 * time.Second
+	WriteTimeout = 1500 * time.Millisecond
 )
 
 type Conn struct {
@@ -78,12 +81,8 @@ func Dial(addr string) (*Conn, error) {
 	fmt.Print(line)
 
 	// Init workers
-	go t.outWorker()
 	go t.inWorker()
-
-	t.In <- "version"
-	fmt.Println("Checking server version...")
-	fmt.Println(<-t.Out)
+	go t.outWorker()
 
 	return t, err
 }
@@ -104,14 +103,49 @@ func (c *Conn) Cmd(s string) {
 	fmt.Println(<-c.Out)
 }
 
+// inWorker writes server requests and sends them to `t.In` channel.
+func (c *Conn) inWorker() {
+	var (
+		retry = true
+		tries int
+	)
+
+	buf := bufio.NewWriter(c.conn)
+
+	for {
+		select {
+		case line := <-c.In:
+			// Ensure line is sent to remote telnetd
+			for retry && (tries < WriteRetries) {
+				c.conn.SetWriteDeadline(time.Now().Add(WriteTimeout))
+
+				_, err := buf.WriteString(line)
+				buf.Flush()
+
+				if err != nil {
+					tries++
+				} else {
+					// Exit inner loop
+					retry = false
+				}
+			}
+
+			// Reset write ensurance
+			retry, tries = true, 0
+		case <-c.quit:
+			return
+		}
+	}
+}
+
 // outWorker reads server responses and sends them to `t.Out` channel.
 func (c *Conn) outWorker() {
+	buf := bufio.NewReader(c.conn)
+
 	for {
 		select {
 		// Check if there's something to receive
 		case <-time.After(ReadAfter):
-			log.Println("I'm reading something!")
-
 			var (
 				end   bool
 				chunk string
@@ -120,9 +154,8 @@ func (c *Conn) outWorker() {
 			c.conn.SetReadDeadline(time.Now().Add(ReadTimeout))
 
 			// Read until end of response (error footer)
-			buf := bufio.NewReader(c.conn)
 			for !end {
-				log.Println("Inside retry for loop!")
+				// log.Println("Inside retry for loop!")
 				line, err := buf.ReadString('\n')
 				fatal(err, fmt.Sprint(err))
 
@@ -142,46 +175,6 @@ func (c *Conn) outWorker() {
 			return
 		}
 	}
-}
-
-// outWorker writes server requests and sends them to `t.In` channel.
-func (c *Conn) inWorker() {
-	var (
-		retry = true
-		tries int
-	)
-
-	buf := bufio.NewWriter(c.conn)
-
-	for {
-		select {
-		case line := <-c.In:
-			// Ensure line is sent to remote telnetd
-			for retry && (tries < WriteRetries) {
-				c.conn.SetWriteDeadline(time.Now().Add(WriteTimeout))
-
-				_, err := buf.WriteString(line)
-
-				if err != nil {
-					tries++
-				} else {
-					// Exit loop
-					retry = false
-				}
-			}
-
-			// Reset write ensurance
-			retry, tries = true, 0
-		case <-c.quit:
-			return
-		}
-	}
-}
-
-// init registers log package prefix and removes any flags
-func init() {
-	log.SetPrefix("ts3> ")
-	log.SetFlags(0)
 }
 
 // fatal exits application if encounters an error
