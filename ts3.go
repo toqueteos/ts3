@@ -6,6 +6,7 @@ package ts3
 import (
 	"bufio"
 	"fmt"
+	"io"
 	stdlog "log"
 	"net"
 	"os"
@@ -22,7 +23,6 @@ const (
 var log = stdlog.New(os.Stdout, "ts3> ", stdlog.LstdFlags)
 
 var (
-	WriteRetries = 3
 	ReadAfter    = 100 * time.Millisecond
 	DialTimeout  = 1 * time.Second
 	ReadTimeout  = 2 * time.Second
@@ -36,11 +36,13 @@ type Conn struct {
 	// Out holds messages read from server
 	In, Out chan string
 	quit    chan bool
+	r       *bufio.Reader
+	w       *bufio.Writer
 }
 
 // Dial connects to a local/remote TS3 server. A default port is appended to
 // `addr` if user doesn't provide one.
-func Dial(addr string) (*Conn, error) {
+func Dial(addr string) *Conn {
 	var (
 		err  error
 		line string
@@ -56,17 +58,18 @@ func Dial(addr string) (*Conn, error) {
 	fatal(err, fmt.Sprintf("Connection error: %v\n", err))
 
 	// Allocate connection object
-	t := &Conn{
+	ts3conn := &Conn{
 		addr: addr,
 		conn: c,
 		In:   make(chan string),
 		Out:  make(chan string),
 		quit: make(chan bool),
+		r:    bufio.NewReader(c),
+		w:    bufio.NewWriter(c),
 	}
 
 	// Buffer to read from TCP socket; Read first line
-	buf := bufio.NewReader(c)
-	line, err = buf.ReadString('\n')
+	line, err = ts3conn.r.ReadString('\n')
 	fatal(err, "Couldn't identify server.")
 	fmt.Print(line)
 
@@ -76,15 +79,25 @@ func Dial(addr string) (*Conn, error) {
 	}
 
 	// Show welcome message
-	line, err = buf.ReadString('\n')
+	line, err = ts3conn.r.ReadString('\n')
 	fatal(err, "Couldn't recv welcome message.")
 	fmt.Print(line)
 
-	// Init workers
-	go t.inWorker()
-	go t.outWorker()
+	// Copy flow: writer (request) -> conn -> reader (response)
+	go cp(ts3conn.w, c)
+	go cp(c, ts3conn.r)
 
-	return t, err
+	// Workers parse
+	go ts3conn.inWorker()
+	go ts3conn.outWorker()
+
+	return ts3conn
+}
+
+// cp copies from an io.Reader to an io.Writer
+func cp(dst io.Writer, src io.Reader) {
+	_, err := io.Copy(dst, src)
+	fatal(err)
 }
 
 // Close closes underlying TCP Conn to local/remote server.
@@ -103,45 +116,28 @@ func (c *Conn) Cmd(s string) {
 	fmt.Println(<-c.Out)
 }
 
-// inWorker writes server requests and sends them to `t.In` channel.
+// inWorker writes (copies) incoming requests to its underlying io.Writer.
 func (c *Conn) inWorker() {
-	var (
-		retry = true
-		tries int
-	)
-
-	buf := bufio.NewWriter(c.conn)
+	var err error
 
 	for {
 		select {
 		case line := <-c.In:
-			// Ensure line is sent to remote telnetd
-			for retry && (tries < WriteRetries) {
-				c.conn.SetWriteDeadline(time.Now().Add(WriteTimeout))
+			c.conn.SetWriteDeadline(time.Now().Add(WriteTimeout))
 
-				_, err := buf.WriteString(line)
-				buf.Flush()
+			_, err = c.w.WriteString(line)
+			fatal(err)
 
-				if err != nil {
-					tries++
-				} else {
-					// Exit inner loop
-					retry = false
-				}
-			}
-
-			// Reset write ensurance
-			retry, tries = true, 0
+			err = c.w.Flush()
+			fatal(err)
 		case <-c.quit:
 			return
 		}
 	}
 }
 
-// outWorker reads server responses and sends them to `t.Out` channel.
+// inWorker reads (copies) incoming responses to its underlying io.Reader.
 func (c *Conn) outWorker() {
-	buf := bufio.NewReader(c.conn)
-
 	for {
 		select {
 		// Check if there's something to receive
@@ -151,15 +147,12 @@ func (c *Conn) outWorker() {
 				chunk string
 			)
 
-			c.conn.SetReadDeadline(time.Now().Add(ReadTimeout))
-
 			// Read until end of response (error footer)
 			for !end {
-				// log.Println("Inside retry for loop!")
-				line, err := buf.ReadString('\n')
-				fatal(err, fmt.Sprint(err))
+				line, err := c.r.ReadString('\n')
+				fatal(err)
 
-				// Trim network control chars and save line to chunk
+				// Trim network control chars
 				line = StringsTrimNet(line)
 				chunk += line
 
@@ -178,22 +171,12 @@ func (c *Conn) outWorker() {
 }
 
 // fatal exits application if encounters an error
-func fatal(err error, s string) {
+func fatal(err error, s ...string) {
 	if err != nil {
-		log.Fatal(s)
-	}
-}
-
-// info logs an error without exitting from application
-func info(err error, s string) {
-	if err != nil {
-		log.Println(s)
-	}
-}
-
-// info logs an error without exitting from application
-func infoErr(err error) {
-	if err != nil {
-		log.Println(err)
+		if len(s) == 0 {
+			log.Fatal(err)
+		} else {
+			log.Fatal(s)
+		}
 	}
 }
