@@ -5,7 +5,7 @@ import (
 )
 
 // Escapes special chars
-func ts3Quote(s string) string {
+func Ts3Quote(s string) string {
 	s = strings.Replace(s, "/", "\\/", -1)
 	s = strings.Replace(s, " ", "\\s", -1)
 	s = strings.Replace(s, "|", "\\p", -1)
@@ -13,7 +13,7 @@ func ts3Quote(s string) string {
 }
 
 // Unescapes special chars
-func ts3Unquote(s string) string {
+func Ts3Unquote(s string) string {
 	s = strings.Replace(s, "\\/", "/", -1)
 	s = strings.Replace(s, "\\s", " ", -1)
 	s = strings.Replace(s, "\\p", "|", -1)
