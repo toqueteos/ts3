@@ -5,7 +5,7 @@ import (
 )
 
 // Escapes special chars
-func Ts3Quote(s string) string {
+func Quote(s string) string {
 	s = strings.Replace(s, "/", "\\/", -1)
 	s = strings.Replace(s, " ", "\\s", -1)
 	s = strings.Replace(s, "|", "\\p", -1)
@@ -13,7 +13,7 @@ func Ts3Quote(s string) string {
 }
 
 // Unescapes special chars
-func Ts3Unquote(s string) string {
+func Unquote(s string) string {
 	s = strings.Replace(s, "\\/", "/", -1)
 	s = strings.Replace(s, "\\s", " ", -1)
 	s = strings.Replace(s, "\\p", "|", -1)
@@ -21,7 +21,7 @@ func Ts3Unquote(s string) string {
 }
 
 // Keeps only printable ASCII runes, also cleans "\r"
-func StringsTrimNet(s string) string {
+func trimNet(s string) string {
 	var res []rune
 
 	s = strings.Trim(s, "\r")
