@@ -5,6 +5,7 @@ package ts3
 
 import (
 	"bufio"
+	"bytes"
 	"fmt"
 	"io"
 	stdlog "log"
@@ -19,25 +20,18 @@ const (
 	VerificationID = "TS3"
 )
 
-// Custom logger
-var log = stdlog.New(os.Stdout, "ts3> ", stdlog.LstdFlags)
-
 var (
-	ReadAfter    = 100 * time.Millisecond
-	DialTimeout  = 1 * time.Second
-	ReadTimeout  = 2 * time.Second
-	WriteTimeout = 1500 * time.Millisecond
+	// Custom logger
+	log = stdlog.New(os.Stdout, "ts3> ", stdlog.LstdFlags)
+	// ts3.Dial max timeout
+	DialTimeout = 1 * time.Second
 )
 
+type rwChan struct{ In, Out chan string }
+
 type Conn struct {
-	addr string
 	conn net.Conn
-	// In holds messages written to server
-	// Out holds messages read from server
-	In, Out chan string
-	quit    chan bool
-	r       *bufio.Reader
-	w       *bufio.Writer
+	rw   rwChan
 }
 
 // Dial connects to a local/remote TS3 server. A default port is appended to
@@ -54,22 +48,22 @@ func Dial(addr string) *Conn {
 	}
 
 	// Try to establish connection
-	c, err := net.DialTimeout("tcp", addr, DialTimeout)
+	conn, err := net.DialTimeout("tcp", addr, DialTimeout)
 	fatal(err, fmt.Sprintf("Connection error: %v\n", err))
 
 	// Allocate connection object
 	ts3conn := &Conn{
-		addr: addr,
-		conn: c,
-		In:   make(chan string),
-		Out:  make(chan string),
-		quit: make(chan bool),
-		r:    bufio.NewReader(c),
-		w:    bufio.NewWriter(c),
+		conn: conn,
+		rw: rwChan{
+			make(chan string),
+			make(chan string),
+		},
 	}
 
+	rbuf := bufio.NewReader(conn)
+
 	// Buffer to read from TCP socket; Read first line
-	line, err = ts3conn.r.ReadString('\n')
+	line, err = rbuf.ReadString('\n')
 	fatal(err, "Couldn't identify server.")
 	fmt.Print(line)
 
@@ -79,95 +73,51 @@ func Dial(addr string) *Conn {
 	}
 
 	// Show welcome message
-	line, err = ts3conn.r.ReadString('\n')
+	line, err = rbuf.ReadString('\n')
 	fatal(err, "Couldn't recv welcome message.")
 	fmt.Print(line)
 
 	// Copy flow: writer (request) -> conn -> reader (response)
-	go cp(ts3conn.w, c)
-	go cp(c, ts3conn.r)
-
-	// Workers parse
-	go ts3conn.inWorker()
-	go ts3conn.outWorker()
+	go cp(ts3conn, conn)
+	go cp(conn, ts3conn)
 
 	return ts3conn
+}
+
+// Read reads data from buffer into p doubling any IAC chars found (0xff), more
+// info on RFC 854 (Telnet).  It returns the number of bytes read into p.
+func (conn *Conn) Read(p []byte) (int, error) {
+	b := []byte(<-conn.rw.In)
+	bytes.Replace(b, []byte{0xff}, []byte{0xff, 0xff}, -1)
+	copy(p, b)
+	return len(b), nil
+}
+
+// Write writes the contents of p into the buffer. It returns the number of
+// bytes written.
+func (conn *Conn) Write(p []byte) (int, error) {
+	s := string(p)
+	conn.rw.Out <- s
+	return len(p), nil
+}
+
+// Close closes underlying TCP Conn to local/remote server.  Any blocked Read or
+// Write operations will be unblocked and return errors.
+func (c *Conn) Close() error {
+	return c.conn.Close()
+}
+
+// Cmd sends a request to a server and waits for its response.
+func (c *Conn) Cmd(cmd string) string {
+	c.rw.In <- Quote(cmd) + "\n"
+	s := Unquote(<-c.rw.Out)
+	return trimNet(s)
 }
 
 // cp copies from an io.Reader to an io.Writer
 func cp(dst io.Writer, src io.Reader) {
 	_, err := io.Copy(dst, src)
 	fatal(err)
-}
-
-// Close closes underlying TCP Conn to local/remote server.
-func (c *Conn) Close() error {
-	// Two workers need two quit signals
-	c.quit <- true
-	c.quit <- true
-
-	return c.conn.Close()
-}
-
-// Cmd sends an arbitrary command to the server and expects an output.
-func (c *Conn) Cmd(s string) {
-	fmt.Println("> " + s)
-	c.In <- s
-	fmt.Println(<-c.Out)
-}
-
-// inWorker writes (copies) incoming requests to its underlying io.Writer.
-func (c *Conn) inWorker() {
-	var err error
-
-	for {
-		select {
-		case line := <-c.In:
-			c.conn.SetWriteDeadline(time.Now().Add(WriteTimeout))
-
-			_, err = c.w.WriteString(line)
-			fatal(err)
-
-			err = c.w.Flush()
-			fatal(err)
-		case <-c.quit:
-			return
-		}
-	}
-}
-
-// inWorker reads (copies) incoming responses to its underlying io.Reader.
-func (c *Conn) outWorker() {
-	for {
-		select {
-		// Check if there's something to receive
-		case <-time.After(ReadAfter):
-			var (
-				end   bool
-				chunk string
-			)
-
-			// Read until end of response (error footer)
-			for !end {
-				line, err := c.r.ReadString('\n')
-				fatal(err)
-
-				// Trim network control chars
-				line = StringsTrimNet(line)
-				chunk += line
-
-				// Determine end of line
-				if strings.HasPrefix(line, "error id=") ||
-					strings.Contains(line, "notify") {
-					c.Out <- chunk
-					// EOL found, finish iteration
-					end = true
-				}
-			}
-		case <-c.quit:
-			return
-		}
-	}
 }
 
 // fatal exits application if encounters an error
