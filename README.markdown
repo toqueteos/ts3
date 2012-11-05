@@ -21,7 +21,8 @@ TeamSpeak 3 Server Query Library
     func bot(conn *ts3.Conn) {
         defer conn.Cmd("quit")
 
-        r := conn.Cmd("version")
+        s := "version"
+        r := conn.Cmd(s)
         fmt.Printf("> %s\n%s", s, r)
     }
 
