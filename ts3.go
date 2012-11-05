@@ -27,11 +27,12 @@ var (
 	DialTimeout = 1 * time.Second
 )
 
-type rwChan struct{ In, Out chan string }
+// Holds incoming, outgoing and notification requests (1) and responses (2 & 3)
+type RWChan struct{ In, Out, Not chan string }
 
 type Conn struct {
 	conn net.Conn
-	rw   rwChan
+	rw   RWChan
 }
 
 // Dial connects to a local/remote TS3 server. A default port is appended to
@@ -54,9 +55,10 @@ func Dial(addr string) *Conn {
 	// Allocate connection object
 	ts3conn := &Conn{
 		conn: conn,
-		rw: rwChan{
-			make(chan string),
-			make(chan string),
+		rw: RWChan{
+			In:  make(chan string),
+			Out: make(chan string),
+			Not: make(chan string),
 		},
 	}
 
@@ -88,6 +90,7 @@ func Dial(addr string) *Conn {
 // info on RFC 854 (Telnet).  It returns the number of bytes read into p.
 func (conn *Conn) Read(p []byte) (int, error) {
 	b := []byte(<-conn.rw.In)
+	// Double IAC chars
 	bytes.Replace(b, []byte{0xff}, []byte{0xff, 0xff}, -1)
 	copy(p, b)
 	return len(b), nil
@@ -101,17 +104,41 @@ func (conn *Conn) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-// Close closes underlying TCP Conn to local/remote server.  Any blocked Read or
-// Write operations will be unblocked and return errors.
+// Close closes underlying TCP Conn to local/remote server.
 func (c *Conn) Close() error {
 	return c.conn.Close()
 }
 
 // Cmd sends a request to a server and waits for its response.
 func (c *Conn) Cmd(cmd string) string {
-	c.rw.In <- Quote(cmd) + "\n"
-	s := Unquote(<-c.rw.Out)
+	var s string
+
+	c.rw.In <- cmd + "\n"
+
+	// Some commands output two lines
+	var end bool
+	for !end {
+		select {
+		case line := <-c.rw.Out:
+			s += line
+			if strings.HasPrefix(s, "notify") {
+				c.rw.Not <- s
+				end = true
+			}
+			if strings.HasPrefix(s, "error id=") {
+				end = true
+			}
+		case <-time.After(500 * time.Millisecond):
+			end = true
+		}
+	}
+
 	return trimNet(s)
+}
+
+// Chans returns a low-level interaction
+func (c *Conn) Chans() *RWChan {
+	return &c.rw
 }
 
 // cp copies from an io.Reader to an io.Writer
