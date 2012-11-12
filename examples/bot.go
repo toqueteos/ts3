@@ -40,8 +40,10 @@ func bot(conn *ts3.Conn) {
 		//     > request
 		//     response
 		fmt.Printf("> %s\n%s", s, r)
-		// Wait a bit after each command so we don't get banned.  serveradmin
-		// doesn't need this if bot's ip is on whitelist.
-		time.Sleep(200 * time.Millisecond)
+		// Wait a bit after each command so we don't get banned. By default you
+		// can issue 10 commands within 3 seconds.  More info on the
+		// WHITELISTING AND BLACKLISTING section of TS3 ServerQuery Manual
+		// (http://goo.gl/OpJXz).
+		time.Sleep(350 * time.Millisecond)
 	}
 }
