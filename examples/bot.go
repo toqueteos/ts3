@@ -14,7 +14,6 @@ func main() {
 	bot(conn)
 }
 
-
 // bot is a simple bot that checks version, signs in and sends a text message to
 // channel#1 then exits.
 func bot(conn *ts3.Conn) {
@@ -31,7 +30,7 @@ func bot(conn *ts3.Conn) {
 		`clientupdate client_nickname=My\sBot`,
 		// "clientlist",
 		// Send message to channel with id=1
-		"sendtextmessage targetmode=2 target=1 msg=Bot\smessage!",
+		`sendtextmessage targetmode=2 target=1 msg=Bot\smessage!`,
 	}
 
 	for _, s := range cmds {
