@@ -119,10 +119,10 @@ func (c *Conn) Cmd(cmd string) string {
 		select {
 		case line := <-c.rw.Out:
 			s += line
-			if strings.HasPrefix(s, "notify") {
+			/*if strings.HasPrefix(s, "notify") {
 				c.rw.Not <- s
 				end = true
-			}
+			}*/
 			if strings.HasPrefix(s, "error id=") {
 				end = true
 			}
