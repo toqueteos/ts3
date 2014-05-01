@@ -67,8 +67,7 @@ func Dial(addr string) *Conn {
 	// Buffer to read from TCP socket; Read first line
 	line, err = rbuf.ReadString('\n')
 	fatal(err, "Couldn't identify server.")
-	fmt.Print(line)
-
+	
 	// Then check if it's a TS3 server
 	if !strings.Contains(line, VerificationID) {
 		log.Fatal("Not a TeamSpeak 3 server.")
@@ -77,7 +76,6 @@ func Dial(addr string) *Conn {
 	// Show welcome message
 	line, err = rbuf.ReadString('\n')
 	fatal(err, "Couldn't recv welcome message.")
-	fmt.Print(line)
 
 	// Copy flow: writer (request) -> conn -> reader (response)
 	go cp(ts3conn, conn)
