@@ -15,6 +15,7 @@ package ts3
 // Ver. Tab     \v      11      \v              92 118
 
 import (
+	"strconv"
 	"strings"
 )
 
@@ -87,4 +88,19 @@ func trimNet(s string) string {
 	}
 
 	return string(res)
+}
+
+func parseError(data string) ErrorMsg {
+	var err ErrorMsg
+	split := strings.Split(data, " ")
+
+	values := make([]string, 2)
+	for i, s := range split[1:] {
+		values[i] = strings.Split(s, "=")[1]
+	}
+
+	err.Id, _ = strconv.Atoi(values[0])
+	err.Msg = values[1]
+
+	return err
 }

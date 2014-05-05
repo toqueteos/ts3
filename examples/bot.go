@@ -4,11 +4,11 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/toqueteos/ts3"
+	"github.com/zeroZshadow/ts3"
 )
 
 func main() {
-	conn := ts3.Dial(":10011")
+	conn, _ := ts3.Dial(":10011", false)
 	defer conn.Close()
 
 	bot(conn)
