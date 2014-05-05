@@ -19,7 +19,7 @@ const (
 var (
 	// ts3.Dial max timeout
 	DialTimeout    = 1 * time.Second
-	CommandTimeout = 500 * time.Millisecond
+	CommandTimeout = 350 * time.Millisecond
 )
 
 type notification func(string, string)
