@@ -1,30 +1,40 @@
-TeamSpeak 3 Server Query Library
+# ts3 [![](https://godoc.org/github.com/toqueteos/ts3?status.svg)](http://godoc.org/github.com/toqueteos/ts3)
 
-# Simple usage
+A TeamSpeak 3 Server Query library.
 
-    package main
+The API is stable but horrible. Hopefully it's about to change, this project was done quite some time ago and it needs a bit of love from my side.
 
-    import (
-        "fmt"
-        "time"
+# Installation
 
-        "github.com/toqueteos/ts3"
-    )
+`go get github.com/toqueteos/ts3/...`
 
-    func main() {
-        conn := ts3.Dial(":10011")
-        defer conn.Close()
+# Example
 
-        bot(conn)
-    }
+```go
+package main
 
-    func bot(conn *ts3.Conn) {
-        defer conn.Cmd("quit")
+import (
+    "fmt"
+    "time"
 
-        s := "version"
-        r := conn.Cmd(s)
-        fmt.Printf("> %s\n%s", s, r)
-    }
+    "github.com/toqueteos/ts3"
+)
+
+func main() {
+    conn := ts3.Dial(":10011")
+    defer conn.Close()
+
+    bot(conn)
+}
+
+func bot(conn *ts3.Conn) {
+    defer conn.Cmd("quit")
+
+    s := "version"
+    r := conn.Cmd(s)
+    fmt.Printf("> %s\n%s", s, r)
+}
+```
 
 # Notifications support
 
