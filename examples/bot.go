@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/zeroZshadow/ts3"
+	"github.com/toqueteos/ts3"
 )
 
 func main() {
