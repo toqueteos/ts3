@@ -7,5 +7,5 @@ go:
   - tip
 
 script:
-  - go get ./...
-  - go test ./...
+  - go get
+  - go test
