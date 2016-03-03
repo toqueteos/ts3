@@ -1,23 +1,20 @@
 package ts3
 
 // Escaping table:
-// NAME         CHAR    ASCII   REPLACE CHAR    REPLACE ASCII
-// Backslash    \       92      \\              92 92
-// Slash        /       47      \/              92 47
-// Whitespace   " "     32      \s              92 115
-// Pipe         |       124     \p              92 112
-// Bell         \a      7       \a              92 97
-// Backspace    \b      8       \b              92 98
-// Formfeed     \f      12      \f              92 102
-// Newline      \n      10      \n              92 110
-// Car. Ret     \r      13      \r              92 114
-// Hor. Tab     \t      9       \t              92 116
-// Ver. Tab     \v      11      \v              92 118
+//  NAME         CHAR    ASCII   REPLACE CHAR    REPLACE ASCII
+//  Backslash    \       92      \\              92 92
+//  Slash        /       47      \/              92 47
+//  Whitespace   " "     32      \s              92 115
+//  Pipe         |       124     \p              92 112
+//  Bell         \a      7       \a              92 97
+//  Backspace    \b      8       \b              92 98
+//  Formfeed     \f      12      \f              92 102
+//  Newline      \n      10      \n              92 110
+//  Car. Ret     \r      13      \r              92 114
+//  Hor. Tab     \t      9       \t              92 116
+//  Ver. Tab     \v      11      \v              92 118
 
-import (
-	"strconv"
-	"strings"
-)
+import "strings"
 
 var (
 	quoteTable = map[rune][]rune{
@@ -71,36 +68,4 @@ func Unquote(s string) string {
 	}
 
 	return s
-}
-
-// Keeps only printable ASCII runes, also cleans "\r"
-func trimNet(s string) string {
-	var res []rune
-
-	s = strings.Trim(s, "\r")
-
-	// Just pretty ASCII runes
-	for _, r := range s {
-		switch {
-		case 32 >= r || r <= 127:
-			res = append(res, r)
-		}
-	}
-
-	return string(res)
-}
-
-func parseError(data string) ErrorMsg {
-	var err ErrorMsg
-	split := strings.Split(data, " ")
-
-	values := make([]string, 2)
-	for i, s := range split[1:] {
-		values[i] = strings.Split(s, "=")[1]
-	}
-
-	err.Id, _ = strconv.Atoi(values[0])
-	err.Msg = values[1]
-
-	return err
 }

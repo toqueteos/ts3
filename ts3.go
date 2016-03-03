@@ -2,204 +2,155 @@ package ts3
 
 import (
 	"bufio"
-	"bytes"
-	"errors"
-	"io"
+	"fmt"
+	"log"
 	"net"
 	"strings"
-	"sync"
 	"time"
 )
 
-const (
-	DefaultPort    = "10011"
-	VerificationID = "TS3"
-)
+const DefaultPort = 10011
 
-var (
-	// ts3.Dial max timeout
-	DialTimeout    = 1 * time.Second
-	CommandTimeout = 350 * time.Millisecond
-)
+type notification struct {
+	Contents string
+}
 
-type notification func(string, string)
-
+// Conn represents an established low level connection to a TS3 server.
 type Conn struct {
 	conn          net.Conn
-	rbuf          *bufio.Reader
-	wbuf          *bufio.Writer
-	cResult       chan string
-	cNotification chan string
-	cError        chan ErrorMsg
-	notifyCb      notification
-	cmdSync       *sync.WaitGroup
-	cmdLast       time.Time
-	cmdTimeout    time.Duration
+	rw            *bufio.ReadWriter
+	timeout       time.Duration
+	stop          bool
+	messages      chan message
+	notify        bool
+	notifications chan notification
 }
 
-type ErrorMsg struct {
-	Id  int
-	Msg string
-}
-
-// Dial connects to a local/remote TS3 server. A default port is appended to
-// `addr` if user doesn't provide one.
-func Dial(addr string, whitelisted bool) (*Conn, error) {
-	var (
-		err  error
-		line string
-	)
-
-	// Append DefaultPort if user didn't specify one
+// Dial establishes a raw connection to a TS3 server.
+func Dial(addr string) (conn *Conn, err error) {
 	if !strings.Contains(addr, ":") {
-		addr += ":" + DefaultPort
+		addr = fmt.Sprintf("%s:%d", addr, DefaultPort)
 	}
 
-	// Try to establish connection
-	conn, err := net.DialTimeout("tcp", addr, DialTimeout)
+	conn = new(Conn)
+	conn.conn, err = net.Dial("tcp", addr)
 	if err != nil {
+		log.Printf("net.Dial(tcp, %q) failed with error %q\n", addr, err)
 		return nil, err
 	}
 
-	// Create buffers
-	rbuf := bufio.NewReader(conn)
-	wbuf := bufio.NewWriter(conn)
+	rb := bufio.NewReader(conn.conn)
+	wb := bufio.NewWriter(conn.conn)
+	conn.rw = bufio.NewReadWriter(rb, wb)
+	conn.timeout = 5 * time.Second
+	conn.messages = make(chan message)
+	conn.notifications = make(chan notification)
 
-	timeout := time.Duration(350 * time.Millisecond)
-	if whitelisted {
-		timeout = time.Duration(0 * time.Millisecond)
+	var output string
+	for i := 0; i < 2; i++ {
+		output, err = conn.readNext()
+		if err != nil {
+			return nil, err
+		}
+		log.Printf("< %q\n", output)
 	}
 
-	// Allocate connection object
-	ts3conn := &Conn{
-		conn:          conn,
-		rbuf:          rbuf,
-		wbuf:          wbuf,
-		cResult:       make(chan string),
-		cNotification: make(chan string),
-		cError:        make(chan ErrorMsg),
-		notifyCb:      nil,
-		cmdSync:       new(sync.WaitGroup),
-		cmdLast:       time.Now(),
-		cmdTimeout:    timeout,
-	}
+	go conn.recv()
 
-	// Read VerificationID
-	line, err = rbuf.ReadString('\n')
-
-	// Then check if it's a TS3 server
-	if !strings.Contains(line, VerificationID) {
-		return nil, errors.New("Invalid VerificationID")
-	}
-
-	// Read welcome message
-	line, err = rbuf.ReadString('\n')
-
-	// Sync socket incoming data, to ts3conn
-	go ts3conn.sync()
-
-	return ts3conn, nil
+	return conn, nil
 }
 
-// Close closes underlying TCP Conn to local/remote server.
-func (this *Conn) Close() error {
-	return this.conn.Close()
+func (c *Conn) UseNotifications(value bool) { c.notify = value }
+
+func (c *Conn) SetTimeout(timeout time.Duration) { c.timeout = timeout }
+
+func (c *Conn) Close() error {
+	c.stop = true
+	return c.conn.Close()
 }
 
-// Cmd sends a request to a server and waits for its response.
-func (this *Conn) Cmd(cmd string) (string, ErrorMsg) {
-	//Make sure only 1 command runs at a time per connection
-	this.cmdSync.Wait()
-	this.cmdSync.Add(1)
-
-	//Make sure we timeout nicely per command to avoid spamming
-	diff := time.Since(this.cmdLast)
-	if diff < this.cmdTimeout {
-		<-time.After(this.cmdTimeout - diff)
-	}
-
+func (c *Conn) recv() error {
 	var (
-		result string   //Holds end result
-		temp   string   //Holds temp result
-		err    ErrorMsg //Holds error message
+		message message
+		output  string
+		err     error
 	)
-
-	// Write the cmd to the socket, ending with a \n
-	this.send(cmd + "\n")
-
-	// Block on a channel that will recieve the socket READ that is NOT a notification or error
-	// Block on a channel that will recieve the socket READ that is NOT a notification or result
-	done := false
-	for !done {
-		select {
-		case temp = <-this.cResult:
-			result += temp
-			continue
-		case err = <-this.cError:
-			done = true
-		case <-time.After(CommandTimeout):
-			//TODO Is there a better way to handle this?
-			err.Id = 1
-			err.Msg = "timeout"
-			done = true
-		}
-	}
-
-	this.cmdLast = time.Now()
-	this.cmdSync.Done()
-	return result, err
-}
-
-func (this *Conn) NotifyFunc(cb notification) {
-	this.notifyCb = cb
-}
-
-func (this *Conn) send(p string) (int, error) {
-	b := []byte(p)
-	// Double IAC chars
-	bytes.Replace(b, []byte{0xff}, []byte{0xff, 0xff}, -1)
-	return this.conn.Write(b)
-}
-
-func (this *Conn) handleResponse(data string) {
-	// Has to be done by line!
-	// Sadly its possible, when spammed, to have an error and notification to stick together, and more
-	// Should be a better way to solve this overall, but teamspeak is a bitch and doesnt have a standard way to end a reply
-
-	lines := strings.Split(data, "\n")
-	var result string
-
-	for _, line := range lines {
-		switch {
-		case strings.HasPrefix(line, "error"):
-			this.cError <- parseError(line)
-		case strings.HasPrefix(line, "notify"):
-			if this.notifyCb != nil {
-				split := strings.SplitN(line, " ", 2)
-				go this.notifyCb(split[0], split[1])
+	for !c.stop {
+		output, err = c.readNext()
+		if err != nil {
+			if nerr, ok := err.(net.Error); ok {
+				if !nerr.Timeout() {
+					log.Println("server response error", nerr.Error())
+				}
 			}
-		default:
-			result += line
+
+			continue
 		}
+
+		if strings.HasPrefix(output, "notifytextmessage ") {
+			log.Println("N", output)
+			if c.notify {
+				// c.notifications <- output
+			}
+
+			continue
+		}
+
+		if strings.HasPrefix(output, "error ") {
+			message.Error = NewErrorString(output)
+			c.messages <- message
+
+			message.Contents = ""
+			message.Error = nil
+
+			continue
+		}
+
+		message.Contents = output
 	}
 
-	if result != "" {
-		this.cResult <- result
-	}
+	return nil
 }
 
-// Write writes the contents of p into the buffer. It returns the number of bytes written.
-func (this *Conn) Write(p []byte) (int, error) {
-	s := string(p)
-	s = strings.Replace(s, "\r", "", -1)
+func (c *Conn) readNext() (output string, err error) {
+	c.conn.SetDeadline(time.Now().Add(c.timeout))
+	output, err = c.rw.ReadString('\r')
+	if err != nil {
+		return
+	}
 
-	this.handleResponse(s)
-	return len(s), nil
+	output = strings.TrimSpace(output)
+
+	return
 }
 
-// cp copies from an io.Reader to an io.Writer
-func (this *Conn) sync() {
-	for {
-		io.Copy(this, this.conn)
+const EOL = "\n\r"
+
+func (c *Conn) Send(input string) (response string, err error) {
+	if !strings.HasSuffix(input, EOL) {
+		input += EOL
 	}
+
+	log.Printf("> %q\n", input)
+	if err = c.writeString(input); err != nil {
+		return "", err
+	}
+
+	message := <-c.messages
+	if len(message.Contents) > 0 {
+		log.Printf("< Contents: %q\n", message.Contents)
+	}
+	if message.Error != nil {
+		log.Printf("< Error: %q\n", message.Error)
+	}
+
+	return message.Contents, message.Error
+}
+
+func (c *Conn) writeString(input string) (err error) {
+	if _, err = c.rw.WriteString(input); err != nil {
+		return
+	}
+
+	return c.rw.Flush()
 }
