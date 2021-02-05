@@ -1,30 +1,34 @@
+# ts3
+
 TeamSpeak 3 Server Query Library
 
-# Simple usage
+## Simple usage
 
-    package main
+```go
+package main
 
-    import (
-        "fmt"
-        "time"
+import (
+    "fmt"
+    "time"
 
-        "github.com/toqueteos/ts3"
-    )
+    "github.com/toqueteos/ts3"
+)
 
-    func main() {
-        conn := ts3.Dial(":10011")
-        defer conn.Close()
+func main() {
+    conn := ts3.Dial(":10011")
+    defer conn.Close()
 
-        bot(conn)
-    }
+    bot(conn)
+}
 
-    func bot(conn *ts3.Conn) {
-        defer conn.Cmd("quit")
+func bot(conn *ts3.Conn) {
+    defer conn.Cmd("quit")
 
-        s := "version"
-        r := conn.Cmd(s)
-        fmt.Printf("> %s\n%s", s, r)
-    }
+    s := "version"
+    r := conn.Cmd(s)
+    fmt.Printf("> %s\n%s", s, r)
+}
+```
 
 # Notifications support
 
